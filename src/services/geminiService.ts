@@ -37,43 +37,65 @@ export const analyzeMammogram = async (base64Image: string, mimeType: string): P
     },
   };
 
-  try {
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-1.5-flash", // 使用更通用的模型进行测试
-      contents: { parts: [imagePart, { text: prompt }] },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            report: { type: Type.STRING, description: "Markdown formatted medical report" },
-            lesions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  box_2d: { 
-                    type: Type.ARRAY, 
-                    items: { type: Type.NUMBER },
-                    description: "[ymin, xmin, ymax, xmax] normalized 0-1000"
-                  },
-                  label: { type: Type.STRING },
-                  confidence: { type: Type.NUMBER }
-                },
-                required: ["box_2d", "label"]
-              }
-            }
-          },
-          required: ["report", "lesions"]
-        }
-      }
-    });
+  // 尝试的模型列表，按优先级排序
+  const modelsToTry = [
+    "gemini-3-flash-preview",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro-latest"
+  ];
 
-    return JSON.parse(response.text || "{}");
-  } catch (e: any) {
-    console.error("Gemini API Error:", e);
-    // 提取更具体的错误信息
-    const errorMsg = e.message || "未知 API 错误";
-    throw new Error(`AI 分析失败: ${errorMsg}`);
+  let lastError = null;
+
+  for (const modelName of modelsToTry) {
+    try {
+      console.log(`正在尝试使用模型: ${modelName}`);
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model: modelName,
+        contents: { parts: [imagePart, { text: prompt }] },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              report: { type: Type.STRING, description: "Markdown formatted medical report" },
+              lesions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    box_2d: { 
+                      type: Type.ARRAY, 
+                      items: { type: Type.NUMBER },
+                      description: "[ymin, xmin, ymax, xmax] normalized 0-1000"
+                    },
+                    label: { type: Type.STRING },
+                    confidence: { type: Type.NUMBER }
+                  },
+                  required: ["box_2d", "label"]
+                }
+              }
+            },
+            required: ["report", "lesions"]
+          }
+        }
+      });
+
+      if (response.text) {
+        return JSON.parse(response.text);
+      }
+    } catch (e: any) {
+      console.warn(`模型 ${modelName} 调用失败:`, e.message);
+      lastError = e;
+      // 如果不是 404 错误（比如是图片太大或内容审核），则不再尝试其他模型
+      if (e.message && !e.message.includes("404") && !e.message.includes("not found")) {
+        break;
+      }
+      continue; // 尝试下一个模型
+    }
   }
+
+  // 如果所有模型都失败
+  const finalErrorMsg = lastError?.message || "所有尝试的模型均不可用";
+  throw new Error(`AI 分析失败: ${finalErrorMsg}。请检查 API Key 权限或稍后重试。`);
 };
