@@ -1,0 +1,5 @@
+{
+  "name": "BreastAI - 钼靶乳腺癌智能诊断系统",
+  "description": "基于人工智能的乳腺钼靶影像辅助诊断工具，旨在辅助医生进行乳腺癌早期筛查与诊断。",
+  "requestFramePermissions": ["camera"]
+}
