@@ -16,6 +16,10 @@ export interface AnalysisResult {
 export const analyzeMammogram = async (base64Image: string, mimeType: string): Promise<AnalysisResult> => {
   const ai = new GoogleGenAI({ apiKey: API_KEY });
   
+  if (!API_KEY || API_KEY === "MY_GEMINI_API_KEY") {
+    throw new Error("API Key 未配置或无效。请在 Vercel 环境变量中设置 GEMINI_API_KEY。");
+  }
+
   const prompt = `
     你是一名资深的乳腺放射科专家。请分析这张乳腺钼靶（Mammography）照片。
     
@@ -33,41 +37,43 @@ export const analyzeMammogram = async (base64Image: string, mimeType: string): P
     },
   };
 
-  const response: GenerateContentResponse = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
-    contents: { parts: [imagePart, { text: prompt }] },
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          report: { type: Type.STRING, description: "Markdown formatted medical report" },
-          lesions: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                box_2d: { 
-                  type: Type.ARRAY, 
-                  items: { type: Type.NUMBER },
-                  description: "[ymin, xmin, ymax, xmax] normalized 0-1000"
-                },
-                label: { type: Type.STRING },
-                confidence: { type: Type.NUMBER }
-              },
-              required: ["box_2d", "label"]
-            }
-          }
-        },
-        required: ["report", "lesions"]
-      }
-    }
-  });
-
   try {
+    const response: GenerateContentResponse = await ai.models.generateContent({
+      model: "gemini-1.5-flash", // 使用更通用的模型进行测试
+      contents: { parts: [imagePart, { text: prompt }] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            report: { type: Type.STRING, description: "Markdown formatted medical report" },
+            lesions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  box_2d: { 
+                    type: Type.ARRAY, 
+                    items: { type: Type.NUMBER },
+                    description: "[ymin, xmin, ymax, xmax] normalized 0-1000"
+                  },
+                  label: { type: Type.STRING },
+                  confidence: { type: Type.NUMBER }
+                },
+                required: ["box_2d", "label"]
+              }
+            }
+          },
+          required: ["report", "lesions"]
+        }
+      }
+    });
+
     return JSON.parse(response.text || "{}");
-  } catch (e) {
-    console.error("Failed to parse AI response as JSON", e);
-    return { report: response.text || "解析失败", lesions: [] };
+  } catch (e: any) {
+    console.error("Gemini API Error:", e);
+    // 提取更具体的错误信息
+    const errorMsg = e.message || "未知 API 错误";
+    throw new Error(`AI 分析失败: ${errorMsg}`);
   }
 };
