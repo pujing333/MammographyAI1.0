@@ -99,9 +99,9 @@ export default function App() {
       const result = await analyzeMammogram(image, mimeType);
       setReport(result.report);
       setLesions(result.lesions || []);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError('分析过程中出现错误，请检查网络连接或 API 配置。');
+      setError(err.message || '分析过程中出现错误，请检查网络连接或 API 配置。');
     } finally {
       setIsAnalyzing(false);
     }
