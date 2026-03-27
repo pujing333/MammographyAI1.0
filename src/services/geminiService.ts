@@ -20,8 +20,15 @@ export const analyzeMammogram = async (base64Image: string, mimeType: string): P
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      } else {
+        const errorText = await response.text();
+        console.error("非 JSON 错误响应:", errorText);
+        throw new Error(`服务器返回错误 (${response.status}): ${errorText.slice(0, 100)}...`);
+      }
     }
 
     return await response.json();
