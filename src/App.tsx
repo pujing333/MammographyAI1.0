@@ -24,10 +24,31 @@ export default function App() {
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'ok' | 'error'>('checking');
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const res = await fetch("/api/health");
+        if (res.ok) {
+          const data = await res.json();
+          console.log("[App] Backend health check ok:", data);
+          setBackendStatus('ok');
+        } else {
+          setBackendStatus('error');
+        }
+      } catch (err) {
+        console.error("[App] Backend health check failed:", err);
+        setBackendStatus('error');
+      }
+    };
+    checkHealth();
+  }, []);
 
   // Handle Camera
   const startCamera = async () => {
@@ -95,16 +116,58 @@ export default function App() {
     setIsAnalyzing(true);
     setError(null);
     try {
-      const mimeType = image.split(';')[0].split(':')[1];
-      const result = await analyzeMammogram(image, mimeType);
+      // 1. 压缩图片以适应移动网络
+      const compressedImage = await compressImage(image);
+      const mimeType = compressedImage.split(';')[0].split(':')[1];
+      
+      // 2. 调用 AI 分析
+      const result = await analyzeMammogram(compressedImage, mimeType);
       setReport(result.report);
       setLesions(result.lesions || []);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || '分析过程中出现错误，请检查网络连接或 API 配置。');
+      if (err.message === 'Failed to fetch') {
+        setError('网络连接失败：请确保您的手机网络能够访问 Google 服务（可能需要科学上网）。');
+      } else {
+        setError(err.message || '分析过程中出现错误，请检查网络连接或 API 配置。');
+      }
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  // 图片压缩函数
+  const compressImage = (base64Str: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 1200; // 限制最大宽度为 1200px
+        const MAX_HEIGHT = 1600;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        // 压缩质量设为 0.7
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+    });
   };
 
   const reset = () => {
@@ -129,6 +192,17 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1.5">
+              <div className={cn(
+                "w-2 h-2 rounded-full",
+                backendStatus === 'ok' ? "bg-emerald-500" : 
+                backendStatus === 'error' ? "bg-red-500" : "bg-amber-500 animate-pulse"
+              )} />
+              <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">
+                {backendStatus === 'ok' ? "服务器在线" : 
+                 backendStatus === 'error' ? "服务器连接失败" : "正在连接服务器..."}
+              </span>
+            </div>
             <span className="text-xs font-medium px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full">
               移动增强版 v1.1
             </span>
