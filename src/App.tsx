@@ -25,6 +25,7 @@ export default function App() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   
   const [backendStatus, setBackendStatus] = useState<'checking' | 'ok' | 'error'>('checking');
+  const [backendError, setBackendError] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -33,18 +34,24 @@ export default function App() {
 
   useEffect(() => {
     const checkHealth = async () => {
+      const apiUrl = `${window.location.origin}/api/health`;
+      console.log("[App] Checking health at:", apiUrl);
       try {
-        const res = await fetch("/api/health");
+        const res = await fetch(apiUrl);
         if (res.ok) {
           const data = await res.json();
           console.log("[App] Backend health check ok:", data);
           setBackendStatus('ok');
         } else {
+          const text = await res.text();
+          console.error("[App] Backend health check failed with status:", res.status, text);
           setBackendStatus('error');
+          setBackendError(`HTTP ${res.status}: ${text.slice(0, 50)}`);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("[App] Backend health check failed:", err);
         setBackendStatus('error');
+        setBackendError(`${err.name}: ${err.message || "Unknown error"}`);
       }
     };
     checkHealth();
@@ -200,7 +207,7 @@ export default function App() {
               )} />
               <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">
                 {backendStatus === 'ok' ? "服务器在线" : 
-                 backendStatus === 'error' ? "服务器连接失败" : "正在连接服务器..."}
+                 backendStatus === 'error' ? `服务器连接失败 (${backendError})` : "正在连接服务器..."}
               </span>
             </div>
             <span className="text-xs font-medium px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full">
