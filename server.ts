@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -18,8 +19,18 @@ async function startServer() {
 
   console.log(`[Server] Starting server in ${process.env.NODE_ENV || "development"} mode`);
 
-  // Increase payload size for images
+  app.use(cors());
   app.use(express.json({ limit: "10mb" }));
+
+  // Debug route
+  app.get("/debug", (req, res) => {
+    res.json({
+      message: "Express is alive",
+      env: process.env.NODE_ENV,
+      headers: req.headers,
+      url: req.url
+    });
+  });
 
   // Health check
   app.get("/api/health", (req, res) => {
