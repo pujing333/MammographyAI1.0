@@ -16,11 +16,19 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  console.log(`[Server] Starting server in ${process.env.NODE_ENV || "development"} mode`);
+
   // Increase payload size for images
   app.use(express.json({ limit: "10mb" }));
 
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", mode: process.env.NODE_ENV || "development" });
+  });
+
   // API routes
   app.post("/api/analyze", async (req, res) => {
+    console.log(`[Server] Received analyze request: ${req.method} ${req.url}, Body size: ${JSON.stringify(req.body).length} bytes`);
     const { base64Image, mimeType } = req.body;
 
     if (!base64Image || !mimeType) {
@@ -108,6 +116,11 @@ async function startServer() {
 
     const finalErrorMsg = lastError?.message || "所有尝试的模型均不可用";
     res.status(500).json({ error: `AI 分析失败: ${finalErrorMsg}` });
+  });
+
+  // Catch-all for API routes that are not found
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `API 路径未找到: ${req.method} ${req.url}` });
   });
 
   // Vite middleware for development
