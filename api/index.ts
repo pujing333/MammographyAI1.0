@@ -87,8 +87,9 @@ app.post(["/api/analyze", "/analyze"], async (req, res) => {
 
     const modelsToTry = [
       "gemini-3-flash-preview",
+      "gemini-3.1-flash-lite-preview",
+      "gemini-3.1-pro-preview",
       "gemini-1.5-flash-latest",
-      "gemini-1.5-flash",
       "gemini-1.5-pro-latest"
     ];
 
@@ -143,8 +144,18 @@ app.post(["/api/analyze", "/analyze"], async (req, res) => {
       }
     }
 
-    const finalErrorMsg = lastError?.message || "所有尝试的模型均不可用";
-    res.status(500).json({ error: `AI 分析失败: ${finalErrorMsg}` });
+    // Extract message from lastError if it's a JSON string from the API
+    let errorMsg = lastError?.message || "所有尝试的模型均不可用";
+    try {
+      const parsed = JSON.parse(errorMsg);
+      if (parsed.error && parsed.error.message) {
+        errorMsg = parsed.error.message;
+      }
+    } catch (e) {
+      // Not JSON, keep as is
+    }
+
+    res.status(500).json({ error: errorMsg });
   } catch (err: any) {
     console.error("[Server] Unexpected error during analysis:", err);
     res.status(500).json({ error: `服务器内部错误: ${err.message}` });
