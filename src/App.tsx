@@ -24,7 +24,7 @@ export default function App() {
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'ok' | 'error'>('checking');
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'ok' | 'error' | 'missing_key'>('checking');
   const [backendError, setBackendError] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,19 +34,24 @@ export default function App() {
 
   useEffect(() => {
     const checkHealth = async () => {
-      const apiUrl = `${window.location.origin}/api/health`;
+      const apiUrl = `${window.location.origin}/debug`;
       console.log("[App] Checking health at:", apiUrl);
       try {
         const res = await fetch(apiUrl);
         if (res.ok) {
           const data = await res.json();
-          console.log("[App] Backend health check ok:", data);
-          setBackendStatus('ok');
+          console.log("[App] Backend debug check ok:", data);
+          if (data.apiKeySet) {
+            setBackendStatus('ok');
+          } else {
+            setBackendStatus('missing_key');
+            setBackendError('API Key 未配置');
+          }
         } else {
           const text = await res.text();
           console.error("[App] Backend health check failed with status:", res.status, text);
           setBackendStatus('error');
-          setBackendError(`HTTP ${res.status}: ${text.slice(0, 50)}`);
+          setBackendError(`HTTP ${res.status}`);
         }
       } catch (err: any) {
         console.error("[App] Backend health check failed:", err);
@@ -203,11 +208,13 @@ export default function App() {
               <div className={cn(
                 "w-2 h-2 rounded-full",
                 backendStatus === 'ok' ? "bg-emerald-500" : 
-                backendStatus === 'error' ? "bg-red-500" : "bg-amber-500 animate-pulse"
+                backendStatus === 'missing_key' ? "bg-amber-500" :
+                backendStatus === 'error' ? "bg-red-500" : "bg-slate-300 animate-pulse"
               )} />
               <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">
                 {backendStatus === 'ok' ? "服务器在线" : 
-                 backendStatus === 'error' ? `服务器连接失败 (${backendError})` : "正在连接服务器..."}
+                 backendStatus === 'missing_key' ? "API Key 未配置" :
+                 backendStatus === 'error' ? `连接失败 (${backendError})` : "正在连接..."}
               </span>
             </div>
             <span className="text-xs font-medium px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full">
