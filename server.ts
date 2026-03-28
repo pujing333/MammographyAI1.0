@@ -13,11 +13,16 @@ const __dirname = path.dirname(__filename);
 
 const API_KEY = process.env.GEMINI_API_KEY || "";
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+const app = express();
+const PORT = 3000;
 
+async function startServer() {
   console.log(`[Server] Starting server in ${process.env.NODE_ENV || "development"} mode`);
+
+  app.use((req, res, next) => {
+    console.log(`[Server] Incoming request: ${req.method} ${req.url}`);
+    next();
+  });
 
   app.use(cors());
   app.use(express.json({ limit: "10mb" }));
@@ -149,9 +154,14 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  // Only listen if not running as a Vercel function
+  if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
 startServer();
+
+export default app;
