@@ -213,6 +213,9 @@ export default function App() {
             <span className="text-xs font-medium px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full">
               移动增强版 v1.1
             </span>
+            <span className="text-[10px] text-slate-400 hidden lg:inline">
+              Origin: {window.location.origin}
+            </span>
           </div>
         </div>
       </header>
