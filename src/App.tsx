@@ -30,6 +30,8 @@ export default function App() {
   const [editedLesions, setEditedLesions] = useState<Lesion[]>([]);
   const [savedCorrections, setSavedCorrections] = useState<any[]>([]);
   const [activeLesionIdx, setActiveLesionIdx] = useState<number | null>(null);
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
+  const dragStartPos = useRef({ x: 0, y: 0, box: [0, 0, 0, 0] });
   
   const [backendStatus, setBackendStatus] = useState<'checking' | 'ok' | 'error' | 'missing_key'>('checking');
   const [backendError, setBackendError] = useState<string | null>(null);
@@ -107,8 +109,64 @@ export default function App() {
     const box = [...updated[idx].box_2d];
     const fieldIdx = field === 'ymin' ? 0 : field === 'xmin' ? 1 : field === 'ymax' ? 2 : 3;
     box[fieldIdx] = Math.max(0, Math.min(1000, value));
+    
+    // Ensure min size
+    if (field === 'ymin' && box[2] - box[0] < 20) box[0] = box[2] - 20;
+    if (field === 'ymax' && box[2] - box[0] < 20) box[2] = box[0] + 20;
+    if (field === 'xmin' && box[3] - box[1] < 20) box[1] = box[3] - 20;
+    if (field === 'xmax' && box[3] - box[1] < 20) box[3] = box[1] + 20;
+
     updated[idx].box_2d = box as [number, number, number, number];
     setEditedLesions(updated);
+  };
+
+  const moveLesion = (idx: number, dy: number, dx: number) => {
+    const updated = [...editedLesions];
+    const [ymin, xmin, ymax, xmax] = updated[idx].box_2d;
+    const h = ymax - ymin;
+    const w = xmax - xmin;
+    
+    let ny1 = Math.max(0, Math.min(1000 - h, ymin + dy));
+    let nx1 = Math.max(0, Math.min(1000 - w, xmin + dx));
+    
+    updated[idx].box_2d = [ny1, nx1, ny1 + h, nx1 + w];
+    setEditedLesions(updated);
+  };
+
+  const onDragStart = (e: React.PointerEvent, idx: number) => {
+    if (!isEditing) return;
+    e.stopPropagation();
+    setDraggingIdx(idx);
+    setActiveLesionIdx(idx);
+    dragStartPos.current = {
+      x: e.clientX,
+      y: e.clientY,
+      box: [...editedLesions[idx].box_2d]
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onDragMove = (e: React.PointerEvent) => {
+    if (draggingIdx === null || !imageContainerRef.current) return;
+    
+    const rect = imageContainerRef.current.getBoundingClientRect();
+    const dx = ((e.clientX - dragStartPos.current.x) / rect.width) * 1000;
+    const dy = ((e.clientY - dragStartPos.current.y) / rect.height) * 1000;
+    
+    const [ymin, xmin, ymax, xmax] = dragStartPos.current.box;
+    const h = ymax - ymin;
+    const w = xmax - xmin;
+    
+    let ny1 = Math.max(0, Math.min(1000 - h, ymin + dy));
+    let nx1 = Math.max(0, Math.min(1000 - w, xmin + dx));
+    
+    const updated = [...editedLesions];
+    updated[draggingIdx].box_2d = [ny1, nx1, ny1 + h, nx1 + w];
+    setEditedLesions(updated);
+  };
+
+  const onDragEnd = () => {
+    setDraggingIdx(null);
   };
 
   const addNewLesion = () => {
@@ -357,10 +415,13 @@ export default function App() {
                             key={idx}
                             initial={{ opacity: 0, scale: 0.8 }}
                             animate={{ opacity: 1, scale: 1 }}
-                            onClick={() => isEditing && setActiveLesionIdx(idx)}
+                            onPointerDown={(e) => onDragStart(e, idx)}
+                            onPointerMove={onDragMove}
+                            onPointerUp={onDragEnd}
+                            onPointerCancel={onDragEnd}
                             className={cn(
-                              "absolute border-2 transition-all",
-                              isEditing ? (isActive ? "border-emerald-500 bg-emerald-500/20 z-30 ring-2 ring-white" : "border-red-400 bg-red-400/10 cursor-pointer z-10") : "border-red-500 bg-red-500/10 pointer-events-none"
+                              "absolute border-2 transition-all cursor-move touch-none",
+                              isEditing ? (isActive ? "border-emerald-500 bg-emerald-500/20 z-30 ring-2 ring-white" : "border-red-400 bg-red-400/10 z-10") : "border-red-500 bg-red-500/10 pointer-events-none"
                             )}
                             style={{
                               top: `${ymin / 10}%`,
@@ -370,25 +431,32 @@ export default function App() {
                             }}
                           >
                             <span className={cn(
-                              "absolute -top-6 left-0 text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap",
+                              "absolute -top-6 left-0 text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap pointer-events-none",
                               isEditing && isActive ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
                             )}>
-                              {lesion.label} {isEditing ? "(修正中)" : "(可疑)"}
+                              {lesion.label} {isEditing ? "(修正中: 可拖拽)" : "(可疑)"}
                             </span>
                             
                             {isEditing && isActive && (
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="grid grid-cols-2 gap-1 p-1 bg-black/60 rounded text-[8px] text-white pointer-events-auto">
-                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'ymin', ymin - 10); }}>↑</button>
-                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'ymax', ymax + 10); }}>↓</button>
-                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'xmin', xmin - 10); }}>←</button>
-                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'xmax', xmax + 10); }}>→</button>
+                              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                <div className="grid grid-cols-4 gap-1 p-1.5 bg-black/80 rounded-lg text-[10px] text-white pointer-events-auto shadow-xl border border-white/20">
+                                  {/* Move Controls */}
+                                  <button onClick={(e) => { e.stopPropagation(); moveLesion(idx, -20, 0); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="上移">↑</button>
+                                  <button onClick={(e) => { e.stopPropagation(); moveLesion(idx, 20, 0); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="下移">↓</button>
+                                  <button onClick={(e) => { e.stopPropagation(); moveLesion(idx, 0, -20); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="左移">←</button>
+                                  <button onClick={(e) => { e.stopPropagation(); moveLesion(idx, 0, 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="右移">→</button>
+                                  
+                                  {/* Resize Controls */}
+                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'ymin', ymin - 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="拉高">H+</button>
+                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'ymin', ymin + 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="缩短">H-</button>
+                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'xmax', xmax + 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="拉宽">W+</button>
+                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'xmax', xmax - 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="缩窄">W-</button>
                                 </div>
                                 <button 
                                   onClick={(e) => { e.stopPropagation(); removeLesion(idx); }}
-                                  className="absolute -bottom-6 right-0 bg-red-600 text-white p-1 rounded"
+                                  className="absolute -bottom-8 right-0 bg-red-600 text-white p-1.5 rounded-full shadow-lg pointer-events-auto hover:bg-red-700"
                                 >
-                                  <X className="w-3 h-3" />
+                                  <X className="w-4 h-4" />
                                 </button>
                               </div>
                             )}
