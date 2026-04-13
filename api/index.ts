@@ -55,10 +55,10 @@ app.get(["/api/health", "/health"], (req, res) => {
 // API routes
 app.post(["/api/analyze", "/analyze"], async (req, res) => {
   console.log(`[Server] Analyze request received. Body size: ${JSON.stringify(req.body).length} bytes`);
-  const { base64Image, mimeType } = req.body;
+  const { images } = req.body; // images: [{ base64, mimeType, view }]
 
-  if (!base64Image || !mimeType) {
-    return res.status(400).json({ error: "缺少图片数据或 MIME 类型" });
+  if (!images || !Array.isArray(images) || images.length === 0) {
+    return res.status(400).json({ error: "缺少图片数据" });
   }
 
   if (!API_KEY || API_KEY === "MY_GEMINI_API_KEY") {
@@ -69,21 +69,30 @@ app.post(["/api/analyze", "/analyze"], async (req, res) => {
     const ai = new GoogleGenAI({ apiKey: API_KEY });
     
     const prompt = `
-      你是一名资深的乳腺放射科专家。请分析这张乳腺钼靶（Mammography）照片。
+      你是一名资深的乳腺放射科专家。请分析这组乳腺钼靶（Mammography）照片。
+      这组照片包含同一个病例的不同体位（CC位和MLO位）以及不同对比度的影像。
       
-      1. 请从以下维度进行详细评估：乳腺密度、肿块（形状/边缘/密度）、钙化（形态/分布）、结构扭曲、不对称、皮肤/乳头情况。
-      2. 给出 BI-RADS 分级建议（0-6类）和诊断意见。
-      3. **关键任务**：识别图中所有可疑的恶性结节或病灶，并提供它们的归一化坐标 [ymin, xmin, ymax, xmax]（范围 0-1000）。
+      1. 请结合所有提供的影像进行综合评估：乳腺密度、肿块（形状/边缘/密度）、钙化（形态/分布）、结构扭曲、不对称、皮肤/乳头情况。
+      2. 给出最终的 BI-RADS 分级建议（0-6类）和详细的诊断意见。
+      3. **关键任务**：识别影像中所有可疑的恶性结节或病灶。
+      4. 对于识别出的病灶，请提供它们在影像中的归一化坐标 [ymin, xmin, ymax, xmax]（范围 0-1000）。
       
-      请以 JSON 格式返回结果，包含 'report' (Markdown 格式的详细报告) 和 'lesions' (包含坐标和标签的数组)。
+      请以 JSON 格式返回结果，包含 'report' (Markdown 格式的详细报告) 和 'lesions' (包含坐标、标签和对应影像索引的数组)。
+      JSON 结构示例：
+      {
+        "report": "...",
+        "lesions": [
+          { "box_2d": [ymin, xmin, ymax, xmax], "label": "肿块", "imageIndex": 0, "confidence": 0.9 }
+        ]
+      }
     `;
 
-    const imagePart = {
+    const imageParts = images.map(img => ({
       inlineData: {
-        data: base64Image.split(",")[1],
-        mimeType: mimeType,
+        data: img.base64.split(",")[1],
+        mimeType: img.mimeType,
       },
-    };
+    }));
 
     const modelsToTry = [
       "gemini-3-flash-preview",
@@ -100,7 +109,7 @@ app.post(["/api/analyze", "/analyze"], async (req, res) => {
         console.log(`[Server] Trying model: ${modelName}`);
         const response = await ai.models.generateContent({
           model: modelName,
-          contents: { parts: [imagePart, { text: prompt }] },
+          contents: { parts: [...imageParts, { text: prompt }] },
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -118,9 +127,10 @@ app.post(["/api/analyze", "/analyze"], async (req, res) => {
                         description: "[ymin, xmin, ymax, xmax] normalized 0-1000"
                       },
                       label: { type: Type.STRING },
+                      imageIndex: { type: Type.NUMBER, description: "Index of the image where the lesion is found" },
                       confidence: { type: Type.NUMBER }
                     },
-                    required: ["box_2d", "label"]
+                    required: ["box_2d", "label", "imageIndex"]
                   }
                 }
               },
