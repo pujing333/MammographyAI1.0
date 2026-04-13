@@ -16,13 +16,17 @@ function cn(...inputs: ClassValue[]) {
 }
 
 export default function App() {
-  const [image, setImage] = useState<string | null>(null);
+  const [images, setImages] = useState<(string | null)[]>([null, null, null, null]);
+  const [currentImageIdx, setCurrentImageIdx] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [report, setReport] = useState<string | null>(null);
   const [lesions, setLesions] = useState<Lesion[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  
+  const imageLabels = ["CC位 (对比度1)", "CC位 (对比度2)", "MLO位 (对比度1)", "MLO位 (对比度2)"];
+  const biradsOptions = ["BI-RADS 0", "BI-RADS 1", "BI-RADS 2", "BI-RADS 3", "BI-RADS 4A", "BI-RADS 4B", "BI-RADS 4C", "BI-RADS 5", "BI-RADS 6"];
   
   // Learning & Correction States
   const [isEditing, setIsEditing] = useState(false);
@@ -78,7 +82,7 @@ export default function App() {
       originalLesions: lesions,
       correctedReport: editedReport,
       correctedLesions: editedLesions,
-      image: image // Note: This stores the base64, might grow localStorage quickly
+      images: images // Store all 4 images
     };
 
     const updated = [...savedCorrections, newCorrection];
@@ -173,10 +177,19 @@ export default function App() {
     const newLesion: Lesion = {
       box_2d: [400, 400, 600, 600],
       label: '新增病灶',
-      confidence: 1.0
+      imageIndex: currentImageIdx,
+      confidence: 1.0,
+      birads: 'BI-RADS 4A'
     };
     setEditedLesions([...editedLesions, newLesion]);
     setActiveLesionIdx(editedLesions.length);
+  };
+
+  const updateLesionBirads = (idx: number, birads: string) => {
+    const updated = [...editedLesions];
+    updated[idx].birads = birads;
+    updated[idx].label = birads; // Sync label with birads for clarity
+    setEditedLesions(updated);
   };
 
   const removeLesion = (idx: number) => {
@@ -218,7 +231,9 @@ export default function App() {
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
-        setImage(dataUrl);
+        const newImages = [...images];
+        newImages[currentImageIdx] = dataUrl;
+        setImages(newImages);
         stopCamera();
         setReport(null);
         setLesions([]);
@@ -227,7 +242,7 @@ export default function App() {
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, slotIdx: number) => {
     const file = e.target.files?.[0];
     if (file) {
       if (!file.type.startsWith('image/')) {
@@ -236,7 +251,10 @@ export default function App() {
       }
       const reader = new FileReader();
       reader.onload = (event) => {
-        setImage(event.target?.result as string);
+        const newImages = [...images];
+        newImages[slotIdx] = event.target?.result as string;
+        setImages(newImages);
+        setCurrentImageIdx(slotIdx);
         setReport(null);
         setLesions([]);
         setError(null);
@@ -246,16 +264,30 @@ export default function App() {
   };
 
   const startAnalysis = async () => {
-    if (!image) return;
+    const validImages = images.filter(img => img !== null);
+    if (validImages.length === 0) {
+      setError('请至少上传一张影像进行分析。');
+      return;
+    }
+    
     setIsAnalyzing(true);
     setError(null);
     try {
-      // 1. 压缩图片以适应移动网络
-      const compressedImage = await compressImage(image);
-      const mimeType = compressedImage.split(';')[0].split(':')[1];
+      // 1. 压缩所有已上传的图片
+      const imageInputs = await Promise.all(images.map(async (img, idx) => {
+        if (!img) return null;
+        const compressed = await compressImage(img);
+        return {
+          base64: compressed,
+          mimeType: compressed.split(';')[0].split(':')[1],
+          view: imageLabels[idx]
+        };
+      }));
+
+      const filteredInputs = imageInputs.filter(input => input !== null) as any[];
       
       // 2. 调用 AI 分析
-      const result = await analyzeMammogram(compressedImage, mimeType);
+      const result = await analyzeMammogram(filteredInputs);
       setReport(result.report);
       setLesions(result.lesions || []);
     } catch (err: any) {
@@ -305,7 +337,8 @@ export default function App() {
   };
 
   const reset = () => {
-    setImage(null);
+    setImages([null, null, null, null]);
+    setCurrentImageIdx(0);
     setReport(null);
     setLesions([]);
     setError(null);
@@ -355,34 +388,68 @@ export default function App() {
           {/* Left Column: Upload and Preview */}
           <div className="lg:col-span-5 space-y-6">
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold flex items-center gap-2">
-                    <Upload className="w-5 h-5 text-emerald-600" />
-                    影像上传
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1">支持相册上传或现场拍照</p>
+              <div className="p-5 border-b border-slate-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
+                      <Upload className="w-5 h-5 text-emerald-600" />
+                      影像上传 (多体位)
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-1">请上传 CC 和 MLO 位各 2 张不同对比度照片</p>
+                  </div>
+                  <button 
+                    onClick={reset}
+                    className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                    title="重置所有"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
                 </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={startCamera}
-                    className="p-2 bg-slate-100 rounded-lg hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
-                    title="拍照上传"
-                  >
-                    <Camera className="w-5 h-5" />
-                  </button>
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-2 bg-slate-100 rounded-lg hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
-                    title="文件上传"
-                  >
-                    <Upload className="w-5 h-5" />
-                  </button>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {images.map((img, idx) => (
+                    <div 
+                      key={idx}
+                      onClick={() => {
+                        setCurrentImageIdx(idx);
+                        if (!img) fileInputRef.current?.click();
+                      }}
+                      className={cn(
+                        "relative aspect-square rounded-xl border-2 flex flex-col items-center justify-center cursor-pointer transition-all overflow-hidden",
+                        currentImageIdx === idx ? "border-emerald-500 bg-emerald-50/50" : "border-slate-100 bg-slate-50 hover:border-slate-300",
+                        img ? "border-solid" : "border-dashed"
+                      )}
+                    >
+                      {img ? (
+                        <>
+                          <img src={img} alt={imageLabels[idx]} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 flex items-center justify-center transition-opacity">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                              className="p-2 bg-white rounded-full text-slate-800"
+                            >
+                              <Upload className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center p-2">
+                          <Upload className="w-5 h-5 text-slate-300 mx-auto mb-1" />
+                          <span className="text-[10px] font-medium text-slate-400 leading-tight block">{imageLabels[idx]}</span>
+                        </div>
+                      )}
+                      {img && (
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] py-0.5 px-1 text-center truncate">
+                          {imageLabels[idx]}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
               
               <div className="p-5">
-                {!image ? (
+                {!images[currentImageIdx] ? (
                   <div 
                     onClick={() => fileInputRef.current?.click()}
                     className="border-2 border-dashed border-slate-200 rounded-xl p-10 flex flex-col items-center justify-center cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/30 transition-all group"
@@ -390,8 +457,16 @@ export default function App() {
                     <div className="bg-slate-100 p-4 rounded-full group-hover:bg-emerald-100 transition-colors">
                       <Upload className="w-8 h-8 text-slate-400 group-hover:text-emerald-600" />
                     </div>
-                    <p className="mt-4 text-sm font-medium text-slate-600">点击上传或拍照</p>
-                    <p className="mt-1 text-xs text-slate-400">支持 JPG, PNG, DICOM 转图</p>
+                    <p className="mt-4 text-sm font-medium text-slate-600">点击上传 {imageLabels[currentImageIdx]}</p>
+                    <p className="mt-1 text-xs text-slate-400">支持相册上传或现场拍照</p>
+                    <div className="mt-4 flex gap-2">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); startCamera(); }}
+                        className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-xs font-medium flex items-center gap-2 hover:bg-slate-50"
+                      >
+                        <Camera className="w-4 h-4" /> 拍照
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -400,69 +475,91 @@ export default function App() {
                       className="relative rounded-xl overflow-hidden border border-slate-200 bg-black aspect-[3/4] flex items-center justify-center group"
                     >
                       <img 
-                        src={image} 
+                        src={images[currentImageIdx]!} 
                         alt="Mammogram Preview" 
                         className="max-h-full max-w-full object-contain"
                         referrerPolicy="no-referrer"
                       />
                       
                       {/* Lesion Overlay */}
-                      {(isEditing ? editedLesions : lesions).map((lesion, idx) => {
-                        const [ymin, xmin, ymax, xmax] = lesion.box_2d;
-                        const isActive = activeLesionIdx === idx;
-                        return (
-                          <motion.div
-                            key={idx}
-                            initial={{ opacity: 0, scale: 0.8 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            onPointerDown={(e) => onDragStart(e, idx)}
-                            onPointerMove={onDragMove}
-                            onPointerUp={onDragEnd}
-                            onPointerCancel={onDragEnd}
-                            className={cn(
-                              "absolute border-2 transition-all cursor-move touch-none",
-                              isEditing ? (isActive ? "border-emerald-500 bg-emerald-500/20 z-30 ring-2 ring-white" : "border-red-400 bg-red-400/10 z-10") : "border-red-500 bg-red-500/10 pointer-events-none"
-                            )}
-                            style={{
-                              top: `${ymin / 10}%`,
-                              left: `${xmin / 10}%`,
-                              width: `${(xmax - xmin) / 10}%`,
-                              height: `${(ymax - ymin) / 10}%`,
-                            }}
-                          >
-                            <span className={cn(
-                              "absolute -top-6 left-0 text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap pointer-events-none",
-                              isEditing && isActive ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
-                            )}>
-                              {lesion.label} {isEditing ? "(修正中: 可拖拽)" : "(可疑)"}
-                            </span>
-                            
-                            {isEditing && isActive && (
-                              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                <div className="grid grid-cols-4 gap-1 p-1.5 bg-black/80 rounded-lg text-[10px] text-white pointer-events-auto shadow-xl border border-white/20">
-                                  {/* Move Controls */}
-                                  <button onClick={(e) => { e.stopPropagation(); moveLesion(idx, -20, 0); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="上移">↑</button>
-                                  <button onClick={(e) => { e.stopPropagation(); moveLesion(idx, 20, 0); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="下移">↓</button>
-                                  <button onClick={(e) => { e.stopPropagation(); moveLesion(idx, 0, -20); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="左移">←</button>
-                                  <button onClick={(e) => { e.stopPropagation(); moveLesion(idx, 0, 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="右移">→</button>
-                                  
-                                  {/* Resize Controls */}
-                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'ymin', ymin - 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="拉高">H+</button>
-                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'ymin', ymin + 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="缩短">H-</button>
-                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'xmax', xmax + 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="拉宽">W+</button>
-                                  <button onClick={(e) => { e.stopPropagation(); updateLesionPos(idx, 'xmax', xmax - 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="缩窄">W-</button>
+                      {(isEditing ? editedLesions : lesions)
+                        .filter(l => l.imageIndex === currentImageIdx)
+                        .map((lesion, idx) => {
+                          const originalIdx = (isEditing ? editedLesions : lesions).indexOf(lesion);
+                          const [ymin, xmin, ymax, xmax] = lesion.box_2d;
+                          const isActive = activeLesionIdx === originalIdx;
+                          return (
+                            <motion.div
+                              key={originalIdx}
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              onPointerDown={(e) => onDragStart(e, originalIdx)}
+                              onPointerMove={onDragMove}
+                              onPointerUp={onDragEnd}
+                              onPointerCancel={onDragEnd}
+                              className={cn(
+                                "absolute border-2 transition-all cursor-move touch-none",
+                                isEditing ? (isActive ? "border-emerald-500 bg-emerald-500/20 z-30 ring-2 ring-white" : "border-red-400 bg-red-400/10 z-10") : "border-red-500 bg-red-500/10 pointer-events-none"
+                              )}
+                              style={{
+                                top: `${ymin / 10}%`,
+                                left: `${xmin / 10}%`,
+                                width: `${(xmax - xmin) / 10}%`,
+                                height: `${(ymax - ymin) / 10}%`,
+                              }}
+                            >
+                              <span className={cn(
+                                "absolute -top-6 left-0 text-[10px] px-1.5 py-0.5 rounded font-bold whitespace-nowrap pointer-events-none",
+                                isEditing && isActive ? "bg-emerald-500 text-white" : "bg-red-500 text-white"
+                              )}>
+                                {lesion.label} {isEditing ? "(修正中)" : "(可疑)"}
+                              </span>
+                              
+                              {isEditing && isActive && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                                  {/* BI-RADS Selection Grid */}
+                                  <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-48 bg-white rounded-xl shadow-2xl border border-slate-200 p-2 pointer-events-auto z-50">
+                                    <p className="text-[10px] font-bold text-slate-500 mb-1 px-1">选择 BI-RADS 评分</p>
+                                    <div className="grid grid-cols-3 gap-1">
+                                      {biradsOptions.map(opt => (
+                                        <button
+                                          key={opt}
+                                          onClick={(e) => { e.stopPropagation(); updateLesionBirads(originalIdx, opt); }}
+                                          className={cn(
+                                            "text-[9px] py-1 rounded border transition-colors",
+                                            lesion.birads === opt ? "bg-emerald-600 text-white border-emerald-600" : "bg-slate-50 text-slate-600 border-slate-100 hover:bg-slate-100"
+                                          )}
+                                        >
+                                          {opt.split(' ')[1]}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-4 gap-1 p-1.5 bg-black/80 rounded-lg text-[10px] text-white pointer-events-auto shadow-xl border border-white/20">
+                                    {/* Move Controls */}
+                                    <button onClick={(e) => { e.stopPropagation(); moveLesion(originalIdx, -20, 0); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="上移">↑</button>
+                                    <button onClick={(e) => { e.stopPropagation(); moveLesion(originalIdx, 20, 0); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="下移">↓</button>
+                                    <button onClick={(e) => { e.stopPropagation(); moveLesion(originalIdx, 0, -20); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="左移">←</button>
+                                    <button onClick={(e) => { e.stopPropagation(); moveLesion(originalIdx, 0, 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-700 rounded hover:bg-emerald-600" title="右移">→</button>
+                                    
+                                    {/* Resize Controls */}
+                                    <button onClick={(e) => { e.stopPropagation(); updateLesionPos(originalIdx, 'ymin', ymin - 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="拉高">H+</button>
+                                    <button onClick={(e) => { e.stopPropagation(); updateLesionPos(originalIdx, 'ymin', ymin + 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="缩短">H-</button>
+                                    <button onClick={(e) => { e.stopPropagation(); updateLesionPos(originalIdx, 'xmax', xmax + 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="拉宽">W+</button>
+                                    <button onClick={(e) => { e.stopPropagation(); updateLesionPos(originalIdx, 'xmax', xmax - 20); }} className="w-6 h-6 flex items-center justify-center bg-slate-800 rounded hover:bg-blue-600" title="缩窄">W-</button>
+                                  </div>
+                                  <button 
+                                    onClick={(e) => { e.stopPropagation(); removeLesion(originalIdx); }}
+                                    className="absolute -bottom-8 right-0 bg-red-600 text-white p-1.5 rounded-full shadow-lg pointer-events-auto hover:bg-red-700"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
                                 </div>
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); removeLesion(idx); }}
-                                  className="absolute -bottom-8 right-0 bg-red-600 text-white p-1.5 rounded-full shadow-lg pointer-events-auto hover:bg-red-700"
-                                >
-                                  <X className="w-4 h-4" />
-                                </button>
-                              </div>
-                            )}
-                          </motion.div>
-                        );
-                      })}
+                              )}
+                            </motion.div>
+                          );
+                        })}
 
                       {isEditing && (
                         <button 
@@ -472,13 +569,6 @@ export default function App() {
                           <Activity className="w-3 h-3" /> 添加病灶
                         </button>
                       )}
-
-                      <button 
-                        onClick={reset}
-                        className="absolute top-4 right-4 bg-white/90 backdrop-blur shadow-sm p-2 rounded-full hover:bg-white text-slate-600 transition-colors z-20"
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
                     </div>
                     
                     {!report && !isAnalyzing && (
@@ -487,7 +577,7 @@ export default function App() {
                         className="w-full bg-emerald-600 text-white py-3 rounded-xl font-semibold hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-emerald-200"
                       >
                         <Activity className="w-5 h-5" />
-                        开始智能分析
+                        开始多体位综合分析
                       </button>
                     )}
                   </div>
@@ -495,7 +585,7 @@ export default function App() {
                 <input 
                   type="file" 
                   ref={fileInputRef} 
-                  onChange={handleImageUpload} 
+                  onChange={(e) => handleImageUpload(e, currentImageIdx)} 
                   className="hidden" 
                   accept="image/*"
                 />
