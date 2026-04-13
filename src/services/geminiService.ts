@@ -1,7 +1,9 @@
 export interface Lesion {
   box_2d: [number, number, number, number]; // [ymin, xmin, ymax, xmax] normalized 0-1000
   label: string;
+  imageIndex: number;
   confidence: number;
+  birads?: string; // Added for simplified correction
 }
 
 export interface AnalysisResult {
@@ -9,14 +11,20 @@ export interface AnalysisResult {
   lesions: Lesion[];
 }
 
-export const analyzeMammogram = async (base64Image: string, mimeType: string): Promise<AnalysisResult> => {
+export interface ImageInput {
+  base64: string;
+  mimeType: string;
+  view: string;
+}
+
+export const analyzeMammogram = async (images: ImageInput[]): Promise<AnalysisResult> => {
   try {
     const response = await fetch("/api/analyze", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ base64Image, mimeType }),
+      body: JSON.stringify({ images }),
     });
 
     if (!response.ok) {
